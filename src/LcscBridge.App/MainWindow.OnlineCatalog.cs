@@ -12,8 +12,6 @@ public partial class MainWindow
     private readonly EasyEdaProvider _catalogProvider = new();
     private CancellationTokenSource? _catalogCancellation;
     private SourceModelBundle? _selectedBundle;
-    private string? _activeOnlineRequestId;
-    private string? _lastOnlineStage;
     private CatalogItem? SelectedCatalogItem => CatalogResults.SelectedItem as CatalogItem;
     private bool _catalogPreviewsInitialized;
 
@@ -65,8 +63,8 @@ public partial class MainWindow
             CatalogValidationText.Text = errors.Count == 0
                 ? $"Validated source model: {_selectedBundle.SymbolPrimitiveCount} symbol primitives, {_selectedBundle.FootprintPrimitiveCount} footprint primitives."
                 : "Import blocked:\n" + string.Join("\n", errors.Select(x => "• " + x.Message));
-            CatalogValidationText.Foreground = errors.Count == 0 ? System.Windows.Media.Brushes.DarkGreen : System.Windows.Media.Brushes.DarkRed;
-            await RefreshCatalogActionsAsync(errors.Count == 0);
+            CatalogValidationText.Foreground = errors.Count == 0 ? ThemeBrush("SuccessForegroundBrush") : ThemeBrush("ErrorForegroundBrush");
+            await RefreshCatalogActionsAsync(appendDiagnostics: true);
         }
         catch (OperationCanceledException) { StatusText.Text = "Model retrieval cancelled."; }
         catch (Exception ex) { ShowError(ex); }
@@ -105,32 +103,66 @@ public partial class MainWindow
 
     private async Task QueueOnlineCreationAsync(bool place)
     {
-        if (_selectedBundle is null || !_selectedBundle.IsImportable) return;
+        if (_selectedBundle is null || !_selectedBundle.IsImportable || _nativeOperationActive) return;
+        var requestId = Guid.NewGuid().ToString("N");
+        var target = _integration.CaptureActiveSchematic();
+        _nativeOperationActive = true;
+        SetOnlineImportRunning(true);
         try
         {
-            if (!_bridge.IsOnlineAdapterAvailable(out var adapterDiagnostic)) throw new InvalidOperationException(adapterDiagnostic);
-            if (place && !_bridge.IsPlacementAdapterAvailable(out var placementDiagnostic)) throw new InvalidOperationException(placementDiagnostic);
-            var requestId = await _bridge.QueueOnlineImportAsync(_selectedBundle, place);
-            _activeOnlineRequestId = requestId;
-            _lastOnlineStage = "queued";
-            BridgeLog.Info("online-import", $"Queued {_selectedBundle.Component.Metadata.SupplierPartNumber}; placeAfterImport={place}.", requestId);
-            StatusText.Text = $"Native library request {requestId} queued. Keep the Altium LCSC Bridge adapter active.";
-            SetOnlineImportRunning(true);
+            EnsureIntegrationAvailable();
+            BridgeLog.Info("online-import", $"Starting {_selectedBundle.Component.Metadata.SupplierPartNumber}; placeAfterImport={place}.", requestId);
+            var created = await _integration.CreateNativeLibrariesAsync(_selectedBundle, _libraryRoot, requestId, target, OperationProgress());
+            StatusText.Text = $"Request {requestId}: publishing verified native libraries…";
+            var metadata = _selectedBundle.Component.Metadata with
+            {
+                Source = "EasyEDA/LCSC",
+                SourceRevision = _selectedBundle.ProviderRevision,
+                SymbolReference = created.SymbolReference,
+                FootprintName = created.FootprintName
+            };
+            var payload = Path.Combine(created.StagingDirectory, "easyeda-source.json");
+            var manifest = await _store.ImportAsync(new ImportSource(created.SchLibPath, created.PcbLibPath, null,
+                File.Exists(payload) ? payload : null), metadata);
+            TryDeleteStaging(created.StagingDirectory);
+            if (place) Hide();
+            await _integration.InstallAndPlaceAsync(manifest, place, target, requestId, OperationProgress());
+            var manifestPath = Path.Combine(manifest.LibraryDirectory, "manifest.json");
+            if (File.Exists(manifestPath)) await _store.ReconcileAsync(manifestPath);
+            await RefreshAsync();
+            StatusText.Text = place
+                ? $"Published {manifest.PartId} revision {manifest.RevisionId}; interactive placement started."
+                : $"Published and installed {manifest.PartId} revision {manifest.RevisionId}.";
+            CatalogValidationText.Text = StatusText.Text;
+            CatalogValidationText.Foreground = ThemeBrush("SuccessForegroundBrush");
         }
-        catch (Exception ex) { ShowError(ex); }
+        catch (Exception ex)
+        {
+            BridgeLog.Error("online-import", ex, requestId);
+            CatalogValidationText.Text = $"Import failed (request {requestId}): {ex.Message}";
+            CatalogValidationText.Foreground = ThemeBrush("ErrorForegroundBrush");
+            StatusText.Text = CatalogValidationText.Text;
+        }
+        finally
+        {
+            _nativeOperationActive = false;
+            if (!IsVisible) Show();
+            Activate();
+            SetOnlineImportRunning(false);
+            await RefreshCatalogActionsAsync();
+        }
     }
 
     private async void CatalogPlaceCached_Click(object sender, RoutedEventArgs e)
     {
         var supplier = SelectedCatalogItem?.Component.Metadata.SupplierPartNumber;
-        if (string.IsNullOrWhiteSpace(supplier)) return;
+        if (string.IsNullOrWhiteSpace(supplier) || _nativeOperationActive) return;
         var cached = (await _store.SearchAsync(supplier)).FirstOrDefault(x => x.IsPlaceable);
         if (cached is null) return;
         try
         {
-            if (!_bridge.IsPlacementAdapterAvailable(out var diagnostic)) throw new InvalidOperationException(diagnostic);
-            var id = await _bridge.QueueImportAsync(cached, true);
-            StatusText.Text = $"Cached placement request {id} queued.";
+            EnsureIntegrationAvailable();
+            await InstallManifestAsync(cached, true, _integration.CaptureActiveSchematic(), Guid.NewGuid().ToString("N"));
         }
         catch (Exception ex) { ShowError(ex); }
     }
@@ -147,7 +179,7 @@ public partial class MainWindow
     private void SetCatalogBusy(bool busy, string? message)
     {
         CatalogProgress.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
-        CatalogCancelButton.IsEnabled = busy;
+        CatalogCancelButton.IsEnabled = busy && !_nativeOperationActive;
         if (message is not null) StatusText.Text = message;
     }
 
@@ -166,68 +198,19 @@ public partial class MainWindow
     private async Task RefreshCatalogActionsAsync(bool appendDiagnostics = false)
     {
         if (_selectedBundle is null) return;
-        var adapterAvailable = _bridge.IsOnlineAdapterAvailable(out var adapterDiagnostic);
-        var placementAvailable = _bridge.IsPlacementAdapterAvailable(out var placementDiagnostic);
-        var active = !string.IsNullOrWhiteSpace(_activeOnlineRequestId);
-        CatalogImportButton.IsEnabled = _selectedBundle.IsImportable && adapterAvailable && !active;
-        CatalogImportPlaceButton.IsEnabled = _selectedBundle.IsImportable && adapterAvailable && placementAvailable && !active;
-        CatalogPlaceCachedButton.IsEnabled = placementAvailable && !active &&
+        var available = _integration.IsAvailable(out var diagnostic);
+        CatalogImportButton.IsEnabled = _selectedBundle.IsImportable && available && !_nativeOperationActive;
+        CatalogImportPlaceButton.IsEnabled = _selectedBundle.IsImportable && available && !_nativeOperationActive;
+        CatalogPlaceCachedButton.IsEnabled = available && !_nativeOperationActive &&
             (await _store.SearchAsync(_selectedBundle.Component.Metadata.SupplierPartNumber)).Any(x => x.IsPlaceable);
-        if (appendDiagnostics && !adapterAvailable)
+        if (appendDiagnostics && !available)
         {
-            CatalogValidationText.Text += "\n\n" + adapterDiagnostic;
-            CatalogValidationText.Foreground = System.Windows.Media.Brushes.DarkRed;
+            CatalogValidationText.Text += "\n\n" + diagnostic;
+            CatalogValidationText.Foreground = ThemeBrush("ErrorForegroundBrush");
         }
-        if (appendDiagnostics && !placementAvailable && _selectedBundle.IsImportable)
-            CatalogValidationText.Text += "\n\nPlacement unavailable: " + placementDiagnostic;
-        if (!active) StatusText.Text = !_selectedBundle.IsImportable
+        if (!_nativeOperationActive) StatusText.Text = !_selectedBundle.IsImportable
             ? "The selected model contains unsupported data and was not enabled for import."
-            : adapterAvailable ? "Source models validated and ready for native Altium creation." : adapterDiagnostic;
-    }
-
-    private async Task PollOnlineOperationAsync()
-    {
-        if (string.IsNullOrWhiteSpace(_activeOnlineRequestId)) return;
-        var status = _bridge.ReadOnlineOperationStatus(_activeOnlineRequestId);
-        if (status is null) return;
-        if (!string.Equals(_lastOnlineStage, status.Stage, StringComparison.Ordinal))
-        {
-            _lastOnlineStage = status.Stage;
-            BridgeLog.Info("online-status", $"state={status.State}; stage={status.Stage}; detail={status.Detail}", status.RequestId);
-        }
-        if (status.IsTerminal)
-        {
-            if (status.State == "interrupted")
-            {
-                CatalogValidationText.Text = $"Import interrupted at {status.Stage} (request {status.RequestId}): {status.Detail}";
-                CatalogValidationText.Foreground = System.Windows.Media.Brushes.DarkRed;
-                _activeOnlineRequestId = null;
-                _lastOnlineStage = null;
-                SetOnlineImportRunning(false);
-                await RefreshCatalogActionsAsync();
-            }
-            return;
-        }
-        SetOnlineImportRunning(true);
-        var age = DateTimeOffset.UtcNow - status.UpdatedAt;
-        var hasArtifacts = _bridge.HasOnlineOperationArtifacts(status.RequestId);
-        var adapterAlive = _bridge.IsOnlineAdapterAvailable(out var diagnostic);
-        if (age > TimeSpan.FromMinutes(2) && (!hasArtifacts || !adapterAlive))
-        {
-            diagnostic = hasArtifacts ? diagnostic : "No request, processing marker, or response remains for this operation.";
-            await _bridge.WriteOnlineOperationStatusAsync(status.RequestId, "interrupted", status.Stage,
-                "The adapter stopped while this request was active. " + diagnostic);
-            CatalogValidationText.Text = $"Import interrupted at {status.Stage} (request {status.RequestId}): {diagnostic}";
-            CatalogValidationText.Foreground = System.Windows.Media.Brushes.DarkRed;
-            _activeOnlineRequestId = null;
-            _lastOnlineStage = null;
-            SetOnlineImportRunning(false);
-            await RefreshCatalogActionsAsync();
-            return;
-        }
-        StatusText.Text = age > TimeSpan.FromMinutes(2)
-            ? $"Request {status.RequestId} is still active in Altium at {status.Stage}, but status updates are delayed."
-            : $"Request {status.RequestId}: {status.Stage} — {status.Detail}";
+            : available ? "Source models validated and ready for native Altium creation." : diagnostic;
     }
 
     private void ClearCatalogSelection(bool clearDetails = true)
@@ -241,6 +224,13 @@ public partial class MainWindow
         CatalogPartTitle.Text = "Search the EasyEDA/LCSC catalog";
         CatalogPartDescription.Text = string.Empty;
         CatalogPartDetails.Text = string.Empty;
+    }
+
+    private static void TryDeleteStaging(string directory)
+    {
+        try { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     private sealed record CatalogItem(CatalogComponent Component)

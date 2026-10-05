@@ -103,3 +103,35 @@ public interface IAltiumBridge
 {
     Task<string> QueueImportAsync(LibraryManifest manifest, bool placeAfterImport, string? targetDocument = null, CancellationToken cancellationToken = default);
 }
+
+public sealed record AltiumOperationProgress(string RequestId, string Stage, string Detail);
+
+public sealed record NativeLibraryCreationResult(
+    string RequestId,
+    string StagingDirectory,
+    string SchLibPath,
+    string PcbLibPath,
+    string SymbolReference,
+    string FootprintName,
+    string? TargetDocument);
+
+public interface IAltiumIntegration
+{
+    string Version { get; }
+    bool IsAvailable(out string diagnostic);
+    string? CaptureActiveSchematic();
+    Task<NativeLibraryCreationResult> CreateNativeLibrariesAsync(
+        SourceModelBundle bundle,
+        string libraryRoot,
+        string requestId,
+        string? targetDocument,
+        IProgress<AltiumOperationProgress>? progress = null,
+        CancellationToken cancellationToken = default);
+    Task InstallAndPlaceAsync(
+        LibraryManifest manifest,
+        bool placeAfterInstall,
+        string? targetDocument,
+        string requestId,
+        IProgress<AltiumOperationProgress>? progress = null,
+        CancellationToken cancellationToken = default);
+}

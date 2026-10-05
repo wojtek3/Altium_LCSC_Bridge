@@ -3,7 +3,7 @@ using System.IO;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Threading;
+using System.Windows.Media;
 using Microsoft.Win32;
 using LcscBridge.Core;
 
@@ -11,41 +11,42 @@ namespace LcscBridge.App;
 
 public partial class MainWindow : Window
 {
+    private readonly IAltiumIntegration _integration;
     private LibraryStore _store = null!;
-    private FileAltiumBridge _bridge = null!;
     private string _libraryRoot = null!;
     private CancellationTokenSource? _searchCancellation;
-    private readonly DispatcherTimer _responseTimer;
+    private bool _nativeOperationActive;
+    private bool _shutdownRequested;
     private LibraryItem? Selected => Results.SelectedItem as LibraryItem;
 
-    public MainWindow()
+    public MainWindow(IAltiumIntegration integration)
     {
+        _integration = integration ?? throw new ArgumentNullException(nameof(integration));
         InitializeComponent();
         Configure(LoadConfiguredLibraryRoot() ?? DefaultLibraryRoot());
-        BridgeLog.Info("startup", $"Companion 0.2.4 started. Library root: {_libraryRoot}");
-        _responseTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        _responseTimer.Tick += ResponseTimer_Tick;
-        _responseTimer.Start();
-        Loaded += async (_, _) =>
-        {
-            await RefreshAsync();
-            var active = _bridge.FindActiveOnlineOperation();
-            if (active is not null)
-            {
-                _activeOnlineRequestId = active.RequestId;
-                _lastOnlineStage = active.Stage;
-                SetOnlineImportRunning(true);
-                StatusText.Text = $"Recovered active online import {active.RequestId}: {active.Stage}.";
-            }
-        };
+        BridgeLog.Info("startup", $"EasyEDA Loader 0.3.0 opened in Altium. Library root: {_libraryRoot}");
+        Loaded += async (_, _) => await RefreshAsync();
+    }
+
+    public void ActivateExisting()
+    {
+        if (!IsVisible) Show();
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        Activate();
+    }
+
+    public void RequestShutdown()
+    {
+        _shutdownRequested = true;
+        CancelCatalogOperation();
+        Close();
     }
 
     private void Configure(string root)
     {
         _libraryRoot = Path.GetFullPath(root);
         _store = new LibraryStore(_libraryRoot);
-        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        _bridge = new FileAltiumBridge(Path.Combine(local, "AltiumLcscBridge", "Bridge"), _libraryRoot);
+        RemoveExpiredFailures();
         SaveSettings();
         StatusText.Text = $"Library: {_libraryRoot}";
     }
@@ -81,8 +82,7 @@ public partial class MainWindow : Window
         SymbolPreview.Text = string.IsNullOrWhiteSpace(m.SymbolReference) ? "Symbol name missing" : m.SymbolReference;
         FootprintPreview.Text = string.IsNullOrWhiteSpace(m.FootprintName) ? "Footprint name missing" : m.FootprintName;
         PartDetails.Text = $"Manufacturer: {m.Manufacturer}\nSupplier part: {m.SupplierPartNumber}\nPackage: {m.Package}\nSource: {m.Source} {m.SourceRevision}\nRevision: {item.Manifest.RevisionId}";
-        PlaceButton.IsEnabled = item.Manifest.IsPlaceable;
-        InstallButton.IsEnabled = item.Manifest.IsPlaceable;
+        UpdateActionState();
         DatasheetButton.IsEnabled = Uri.TryCreate(m.DatasheetUrl, UriKind.Absolute, out _);
     }
 
@@ -91,20 +91,16 @@ public partial class MainWindow : Window
 
     private async Task ImportAsync(bool place)
     {
+        var target = _integration.CaptureActiveSchematic();
         try
         {
+            EnsureIntegrationAvailable();
             var source = new ImportSource(EmptyToNull(SchLibPath.Text), EmptyToNull(PcbLibPath.Text), EmptyToNull(IntLibPath.Text));
             var metadata = new ComponentMetadata(Manufacturer.Text.Trim(), Mpn.Text.Trim(), SupplierPart.Text.Trim(), Description.Text.Trim(),
                 Package.Text.Trim(), Datasheet.Text.Trim(), "local-import", "1", SymbolReference.Text.Trim(), FootprintName.Text.Trim());
             StatusText.Text = "Importing and checksumming native libraries…";
             var manifest = await _store.ImportAsync(source, metadata);
-            if (place)
-            {
-                if (!_bridge.IsPlacementAdapterAvailable(out var diagnostic)) throw new InvalidOperationException(diagnostic);
-                var id = await _bridge.QueueImportAsync(manifest, true);
-                StatusText.Text = $"Placement request {id} queued. Keep Altium's LCSC Bridge listener open.";
-            }
-            else StatusText.Text = $"Imported {manifest.PartId}, revision {manifest.RevisionId}.";
+            await InstallManifestAsync(manifest, place, target, Guid.NewGuid().ToString("N"));
             await RefreshAsync();
             Tabs.SelectedIndex = 0;
         }
@@ -119,11 +115,53 @@ public partial class MainWindow : Window
         if (Selected is null) return;
         try
         {
-            if (!_bridge.IsPlacementAdapterAvailable(out var diagnostic)) throw new InvalidOperationException(diagnostic);
-            var id = await _bridge.QueueImportAsync(Selected.Manifest, place);
-            StatusText.Text = $"Altium request {id} queued ({(place ? "install and place" : "install")}).";
+            EnsureIntegrationAvailable();
+            await InstallManifestAsync(Selected.Manifest, place, _integration.CaptureActiveSchematic(), Guid.NewGuid().ToString("N"));
+            await RefreshAsync();
         }
         catch (Exception ex) { ShowError(ex); }
+    }
+
+    private async Task InstallManifestAsync(LibraryManifest manifest, bool place, string? target, string requestId)
+    {
+        _nativeOperationActive = true;
+        UpdateActionState();
+        try
+        {
+            var progress = OperationProgress();
+            if (place) Hide();
+            await _integration.InstallAndPlaceAsync(manifest, place, target, requestId, progress);
+            var manifestPath = Path.Combine(manifest.LibraryDirectory, "manifest.json");
+            if (File.Exists(manifestPath)) await _store.ReconcileAsync(manifestPath);
+            StatusText.Text = place
+                ? $"Placement started for {manifest.Metadata.SymbolReference}. Escape cancels placement; Altium undo remains available."
+                : $"Installed {manifest.PartId}, revision {manifest.RevisionId}.";
+        }
+        finally
+        {
+            _nativeOperationActive = false;
+            if (!IsVisible) Show();
+            Activate();
+            UpdateActionState();
+        }
+    }
+
+    private Progress<AltiumOperationProgress> OperationProgress() => new(p =>
+    {
+        StatusText.Text = $"{p.Stage} — {p.Detail}";
+        BridgeLog.Info("operation", $"{p.Stage}: {p.Detail}", p.RequestId);
+    });
+
+    private void UpdateActionState()
+    {
+        var available = !_nativeOperationActive && _integration.IsAvailable(out _);
+        PlaceButton.IsEnabled = available && Selected?.Manifest.IsPlaceable == true;
+        InstallButton.IsEnabled = available && Selected?.Manifest.IsPlaceable == true;
+    }
+
+    private void EnsureIntegrationAvailable()
+    {
+        if (!_integration.IsAvailable(out var diagnostic)) throw new InvalidOperationException(diagnostic);
     }
 
     private void Datasheet_Click(object sender, RoutedEventArgs e)
@@ -165,166 +203,62 @@ public partial class MainWindow : Window
         var settingsDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AltiumLcscBridge");
         Directory.CreateDirectory(settingsDirectory);
         File.WriteAllText(Path.Combine(settingsDirectory, "settings.ini"),
-            $"[Bridge]{Environment.NewLine}protocol=1{Environment.NewLine}libraryRoot={_libraryRoot}{Environment.NewLine}appPath={Environment.ProcessPath}{Environment.NewLine}",
-            Encoding.Unicode);
+            $"[Bridge]{Environment.NewLine}protocol=in-process{Environment.NewLine}libraryRoot={_libraryRoot}{Environment.NewLine}host=EasyEDA-Loader{Environment.NewLine}", Encoding.Unicode);
     }
 
-    private async void ResponseTimer_Tick(object? sender, EventArgs e)
+    private void RemoveExpiredFailures()
     {
-        await PollOnlineOperationAsync();
-        var responseDirectory = Path.Combine(_bridge.BridgeRoot, "responses");
-        foreach (var path in Directory.EnumerateFiles(responseDirectory, "*.response"))
+        var cutoff = DateTime.UtcNow - TimeSpan.FromDays(14);
+        var operations = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AltiumLcscBridge", "Operations");
+        var stagingRoot = Path.Combine(_libraryRoot, ".staging");
+        if (Directory.Exists(stagingRoot))
         {
-            var claimed = path + ".processing";
+            foreach (var directory in Directory.EnumerateDirectories(stagingRoot, "online-*"))
+            {
+                try
+                {
+                    if (Directory.GetLastWriteTimeUtc(directory) >= cutoff) continue;
+                    var id = Path.GetFileName(directory)["online-".Length..];
+                    var journal = Path.Combine(operations, id + ".json");
+                    if (!File.Exists(journal)) continue;
+                    var text = File.ReadAllText(journal);
+                    if (!text.Contains("\"state\": \"failed\"", StringComparison.Ordinal) &&
+                        !text.Contains("\"state\": \"interrupted\"", StringComparison.Ordinal)) continue;
+                    Directory.Delete(directory, true);
+                    BridgeLog.Info("maintenance", "Removed failed staging data retained for more than 14 days.", id);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+                { BridgeLog.Error("maintenance", ex); }
+            }
+        }
+        var legacy = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "AltiumLcscBridge", "Bridge", "online-requests");
+        if (!Directory.Exists(legacy)) return;
+        foreach (var failed in Directory.EnumerateFiles(legacy, "*.processing.failed"))
+        {
             try
             {
-                File.Move(path, claimed);
-                var values = File.ReadAllLines(claimed).Select(x => x.Split('=', 2))
+                if (File.GetLastWriteTimeUtc(failed) >= cutoff) continue;
+                var values = File.ReadAllLines(failed, Encoding.Unicode).Select(x => x.Split('=', 2))
                     .Where(x => x.Length == 2).ToDictionary(x => x[0], x => x[1], StringComparer.OrdinalIgnoreCase);
-                if (string.Equals(values.GetValueOrDefault("operation"), "onlineCreate", StringComparison.OrdinalIgnoreCase))
-                {
-                    await ProcessOnlineCreateResponseAsync(values);
-                    File.Delete(claimed);
-                    await RefreshAsync();
-                    continue;
-                }
-                var requestId = values.GetValueOrDefault("requestId", string.Empty);
-                BridgeLog.Info("response", $"Altium placement response status={values.GetValueOrDefault("status", "unknown")}: {values.GetValueOrDefault("message", "")}", requestId);
-                var pendingPath = Path.Combine(_bridge.BridgeRoot, "pending", requestId + ".pending");
-                var manifestPath = File.Exists(pendingPath) ? await File.ReadAllTextAsync(pendingPath) : values.GetValueOrDefault("manifestPath");
-                if (values.GetValueOrDefault("modified") == "true" && !string.IsNullOrWhiteSpace(manifestPath))
-                    await _store.ReconcileAsync(manifestPath);
-                StatusText.Text = values.GetValueOrDefault("status") == "ok"
-                    ? values.GetValueOrDefault("message", "Altium request completed.")
-                    : "Altium: " + values.GetValueOrDefault("message", "Request failed.");
-                File.Delete(claimed);
-                if (File.Exists(pendingPath)) File.Delete(pendingPath);
-                await RefreshAsync();
+                if (values.TryGetValue("stagingDirectory", out var staging) && IsInside(staging, stagingRoot) && Directory.Exists(staging))
+                    Directory.Delete(staging, true);
+                File.Delete(failed);
+                BridgeLog.Info("maintenance", "Removed a legacy failed request retained for more than 14 days.", values.GetValueOrDefault("requestId"));
             }
-            catch (IOException) { }
-            catch (Exception ex)
-            {
-                BridgeLog.Error("response", ex);
-                if (File.Exists(claimed))
-                {
-                    var failedValues = File.ReadAllLines(claimed).Select(x => x.Split('=', 2))
-                        .Where(x => x.Length == 2).ToDictionary(x => x[0], x => x[1], StringComparer.OrdinalIgnoreCase);
-                    if (string.Equals(failedValues.GetValueOrDefault("operation"), "onlineCreate", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var failedId = failedValues.GetValueOrDefault("requestId", string.Empty);
-                        CatalogValidationText.Text = $"Import failed at publishing (request {failedId}): {ex.Message}";
-                        CatalogValidationText.Foreground = System.Windows.Media.Brushes.DarkRed;
-                        StatusText.Text = CatalogValidationText.Text;
-                        try { await _bridge.WriteOnlineOperationStatusAsync(failedId, "failed", "publishing", ex.Message); }
-                        catch (Exception statusError) { BridgeLog.Error("status", statusError, failedId); }
-                        if (string.Equals(_activeOnlineRequestId, failedId, StringComparison.OrdinalIgnoreCase)) _activeOnlineRequestId = null;
-                        _lastOnlineStage = null;
-                        SetOnlineImportRunning(false);
-                        await RefreshCatalogActionsAsync();
-                        File.Delete(claimed);
-                        continue;
-                    }
-                    File.Move(claimed, path, true);
-                }
-                StatusText.Text = "Could not process Altium response: " + ex.Message;
-            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            { BridgeLog.Error("maintenance", ex); }
         }
     }
 
-    private async Task ProcessOnlineCreateResponseAsync(IReadOnlyDictionary<string, string> values)
-    {
-        var requestId = values.GetValueOrDefault("requestId", string.Empty);
-        BridgeLog.Info("online-response", $"Native-library response status={values.GetValueOrDefault("status", "unknown")}; errorCode={values.GetValueOrDefault("errorCode", "")}; failedStage={values.GetValueOrDefault("failedStage", "")}; staging={values.GetValueOrDefault("stagingDirectory", "")}: {values.GetValueOrDefault("message", "")}", requestId);
-        if (values.GetValueOrDefault("protocol") != FileAltiumBridge.OnlineProtocolVersion.ToString())
-            throw new InvalidDataException("The online-import response uses an incompatible protocol. Install adapter 0.2.4 and restart Altium.");
-        if (!string.Equals(values.GetValueOrDefault("status"), "ok", StringComparison.OrdinalIgnoreCase))
-        {
-            var stage = values.GetValueOrDefault("failedStage", "unknown stage");
-            var code = values.GetValueOrDefault("errorCode", "ALTIUM_ERROR");
-            var message = values.GetValueOrDefault("message", "Unknown adapter error.");
-            CatalogValidationText.Text = $"Import failed at {stage} (request {requestId}, {code}): {message}";
-            CatalogValidationText.Foreground = System.Windows.Media.Brushes.DarkRed;
-            StatusText.Text = CatalogValidationText.Text;
-            await _bridge.WriteOnlineOperationStatusAsync(requestId, "failed", stage, code + ": " + message);
-            if (string.Equals(_activeOnlineRequestId, requestId, StringComparison.OrdinalIgnoreCase)) _activeOnlineRequestId = null;
-            _lastOnlineStage = null;
-            SetOnlineImportRunning(false);
-            await RefreshCatalogActionsAsync();
-            return;
-        }
-
-        var schPath = Path.GetFullPath(RequiredResponse(values, "schLibPath"));
-        var pcbPath = Path.GetFullPath(RequiredResponse(values, "pcbLibPath"));
-        var staging = Path.GetDirectoryName(schPath) ?? throw new InvalidDataException("The adapter returned an invalid staging path.");
-        if (!IsWithin(staging, Path.Combine(_libraryRoot, ".staging")) ||
-            !string.Equals(Path.GetDirectoryName(pcbPath), staging, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("The adapter response escaped the online-import staging directory.");
-
-        var sourcePayload = Path.Combine(staging, "easyeda-source.json");
-        var metadata = new ComponentMetadata(
-            values.GetValueOrDefault("manufacturer", string.Empty),
-            values.GetValueOrDefault("manufacturerPartNumber", string.Empty),
-            values.GetValueOrDefault("supplierPartNumber", string.Empty),
-            values.GetValueOrDefault("description", string.Empty),
-            values.GetValueOrDefault("package", string.Empty),
-            values.GetValueOrDefault("datasheetUrl", string.Empty),
-            "EasyEDA/LCSC",
-            values.GetValueOrDefault("providerRevision", string.Empty),
-            RequiredResponse(values, "symbolReference"),
-            RequiredResponse(values, "footprintName"));
-
-        await _bridge.WriteOnlineOperationStatusAsync(requestId, "running", "publishing", "Publishing verified libraries to the persistent cache.");
-        StatusText.Text = $"Request {requestId}: publishing verified native libraries…";
-        var manifest = await _store.ImportAsync(new ImportSource(schPath, pcbPath, null,
-            File.Exists(sourcePayload) ? sourcePayload : null), metadata);
-        try { Directory.Delete(staging, true); }
-        catch (IOException) { /* The published revision is complete; stale staging can be repaired later. */ }
-        catch (UnauthorizedAccessException) { }
-
-        var place = string.Equals(values.GetValueOrDefault("placeAfterImport"), "true", StringComparison.OrdinalIgnoreCase);
-        BridgeLog.Info("publish", $"Published {manifest.PartId}/{manifest.RevisionId}; placeAfterImport={place}.", requestId);
-        if (!place)
-        {
-            await _bridge.WriteOnlineOperationStatusAsync(requestId, "succeeded", "complete", "Library published to the offline cache.");
-            _activeOnlineRequestId = null;
-            _lastOnlineStage = null;
-            SetOnlineImportRunning(false);
-            await RefreshCatalogActionsAsync();
-            StatusText.Text = $"Published {manifest.PartId} revision {manifest.RevisionId} to the offline library.";
-            return;
-        }
-        if (!_bridge.IsPlacementAdapterAvailable(out var placementDiagnostic))
-        {
-            await _bridge.WriteOnlineOperationStatusAsync(requestId, "succeeded", "published", "Library published; placement listener unavailable.");
-            _activeOnlineRequestId = null;
-            _lastOnlineStage = null;
-            SetOnlineImportRunning(false);
-            await RefreshCatalogActionsAsync();
-            StatusText.Text = $"Published {manifest.PartId} revision {manifest.RevisionId}, but it was not placed. {placementDiagnostic}";
-            BridgeLog.Info("placement", "Library published but placement was not queued: " + placementDiagnostic, requestId);
-            return;
-        }
-        await _bridge.WriteOnlineOperationStatusAsync(requestId, "running", "linking", "Linking the final-path footprint and preparing placement.");
-        var followUpId = await _bridge.QueueImportAsync(manifest, true, values.GetValueOrDefault("targetDocument"));
-        await _bridge.WriteOnlineOperationStatusAsync(requestId, "succeeded", "placement-queued", "Placement request " + followUpId + " was queued.");
-        _activeOnlineRequestId = null;
-        _lastOnlineStage = null;
-        SetOnlineImportRunning(false);
-        await RefreshCatalogActionsAsync();
-        StatusText.Text = $"Published {manifest.PartId} revision {manifest.RevisionId}; placement request {followUpId} queued.";
-    }
-
-    private static string RequiredResponse(IReadOnlyDictionary<string, string> values, string key) =>
-        values.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value)
-            ? value : throw new InvalidDataException("The Altium adapter response is missing: " + key);
-
-    private static bool IsWithin(string child, string parent)
+    private static bool IsInside(string child, string parent)
     {
         var relative = Path.GetRelativePath(Path.GetFullPath(parent), Path.GetFullPath(child));
         return relative != ".." && !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) && !Path.IsPathRooted(relative);
     }
 
     private static string DefaultLibraryRoot() => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "LCSC");
+
     private static string? LoadConfiguredLibraryRoot()
     {
         var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AltiumLcscBridge", "settings.ini");
@@ -338,8 +272,17 @@ public partial class MainWindow : Window
         catch (IOException) { return null; }
         catch (UnauthorizedAccessException) { return null; }
     }
+
     private static string? EmptyToNull(string value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-    private void ShowError(Exception ex) { BridgeLog.Error("ui", ex); StatusText.Text = ex.Message; MessageBox.Show(this, ex.Message, "Altium LCSC Bridge", MessageBoxButton.OK, MessageBoxImage.Error); }
+
+    private void ShowError(Exception ex)
+    {
+        BridgeLog.Error("ui", ex);
+        StatusText.Text = ex.Message;
+        MessageBox.Show(this, ex.Message, "EasyEDA Loader", MessageBoxButton.OK, MessageBoxImage.Error);
+    }
+
+    private Brush ThemeBrush(string key) => (Brush)FindResource(key);
 
     private sealed record LibraryItem(LibraryManifest Manifest)
     {

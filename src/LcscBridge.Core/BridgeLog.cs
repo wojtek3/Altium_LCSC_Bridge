@@ -19,7 +19,7 @@ public static class BridgeLog
             lock (Sync)
             {
                 Directory.CreateDirectory(LogDirectory);
-                var path = Path.Combine(LogDirectory, $"companion-{DateTime.UtcNow:yyyyMMdd}.log");
+                var path = Path.Combine(LogDirectory, $"easyeda-loader-{DateTime.UtcNow:yyyyMMdd}.log");
                 var clean = message.Replace('\r', ' ').Replace('\n', ' ');
                 var line = $"{DateTimeOffset.Now:O} [{level}] [{area}]" +
                            (string.IsNullOrWhiteSpace(requestId) ? "" : $" [request={requestId}]") +
@@ -37,7 +37,7 @@ public static class BridgeLog
 
     private static void PruneOldLogs()
     {
-        foreach (var file in new DirectoryInfo(LogDirectory).EnumerateFiles("companion-*.log")
+        foreach (var file in new DirectoryInfo(LogDirectory).EnumerateFiles("easyeda-loader-*.log")
                      .OrderByDescending(x => x.Name).Skip(14))
             file.Delete();
     }

@@ -1,59 +1,58 @@
-# Altium 26.9 validation checklist
+# EasyEDA Loader 0.3.0 validation
 
-Run these checks on a disposable project before using imported components in production.
+Release qualification targets Altium Designer 26.9.1.10 on Windows x64. Automated checks do not replace the interactive Altium gates below.
 
-## Companion and online catalog
+## Automated gates
 
-1. Install the packaged build on Windows x64 without a separately installed .NET runtime and confirm it starts.
-2. Open **LCSC website** and search for an LCSC number, a manufacturer part number containing `/`, a phrase containing spaces, and a Unicode term.
-3. Verify Back, Forward, Home, Reload/Stop, current address, and **Open in browser**.
-4. Follow a link that requests a new window and confirm it opens in the default browser.
-5. Restart the companion and confirm the isolated WebView2 profile retains normal website state.
-6. Disconnect the network and confirm the Online tab shows a recoverable error while Offline library and Import local files still work.
-7. On a machine without WebView2 Runtime, confirm the Online tab offers the official runtime download and external-browser actions.
+- Restore, build, and tests complete without errors.
+- Core and UI target .NET 8; the extension references installed Altium assemblies without redistributing them.
+- The release contains `EasyEDA.Loader.UI.dll`, `LcscBridge.Core.dll`, WebView2 managed assemblies, and x64 `WebView2Loader.dll`.
+- The release contains Microsoft.Data.Sqlite, SQLitePCLRaw, and x64 `e_sqlite3.dll`.
+- Online query encoding, schema validation, exact LCSC identity matching, layer preflight, unsupported-layer rejection, storage deduplication, atomic manifests, and interrupted status behavior pass.
+- The package contains GPL source, license, attribution, installer, and uninstaller.
 
-The embedded site is for live browsing. Validate structured retrieval and model import separately through **Online components**.
+## Altium host gate
 
-## Altium integration
+1. Upgrade from 0.2.4 with Altium and the old companion closed.
+2. Confirm `ExtensionsRegistry.xml` still contains VaultExplorer and every unrelated extension.
+3. Start Altium and verify there is no VaultExplorer startup error.
+4. Run the existing **EasyEDA Loader** command. Confirm one non-modal **EasyEDA Loader** window opens.
+5. Click the command repeatedly, close, minimize, and reopen the window. Confirm the existing window is activated and Altium remains editable.
+6. Open **LCSC website** and both component previews. Confirm WebView2 loads with profiles under `%LOCALAPPDATA%\AltiumLcscBridge`.
+7. Search the offline index. This verifies SQLite and the converter/UI dependencies coexist in Altium's .NET 8 host.
 
-1. Run `DiagnoseBridge` and record the installed Altium build.
-2. Import a known-good, self-created SchLib/PcbLib pair with matching pin and pad designators.
-3. Confirm the adapter reports success and `manifest.json` checksums are reconciled after the SchLib is saved.
-4. Close and reopen Altium; confirm both libraries remain installed and the cached part remains searchable offline.
-5. Place the symbol, cancel a second placement, and verify Undo removes only the placed component.
-6. Inspect component parameters and its PCB model path/name.
-7. Run **Design → Update PCB Document**, execute the ECO, and verify designator, footprint, pads, orientation, and nets.
-8. Repeat with a passive, diode, transistor, multi-unit IC, exposed-pad IC, through-hole connector, and a component with repeated pad numbers.
-9. Compare geometry and pin/pad mapping to the manufacturer datasheet and trusted source library.
-10. Test a locked library, Unicode path, missing footprint, malformed request, interrupted request, library relocation, repair install, and uninstall.
+Any startup, assembly-loading, WPF, WebView2, or SQLite conflict blocks release.
 
-Do not mark M1/M5 complete until these interactive checks pass on Altium 26.9.1.10.
-# Validation status
+## Native import and placement gate
 
-## Automated checks
+For an original test component and each supported regression part:
 
-The release build runs the following checks and stops on any failure:
+1. Open a schematic and select **Import and place**.
+2. Confirm the extension creates a staging PcbLib and SchLib, saves them, closes them, reopens both, and verifies exact footprint/symbol names.
+3. Confirm publication creates a revision under `Documents\LCSC\parts` and the installed SchLib references the final revision PcbLib path.
+4. Confirm Altium starts native interactive placement on the captured schematic.
+5. Place once, undo, repeat, and press Escape. Confirm no component is added at `(0,0)` and cancellation does not mark the library import failed.
+6. Run Update PCB/ECO and verify footprint resolution, pin/pad mapping, and nets.
+7. Restart Altium, disconnect the network, and place the cached revision again.
 
-- URL encoding and HTTP/HTTPS navigation restrictions.
-- Persistent import, duplicate reuse, changed-revision handling, index rebuild, and bridge path confinement.
-- Exact LCSC match selection and rejection of wrong-part provider responses.
-- Rejection of unsupported EasyEDA footprint geometry.
-- Protocol 3 online-source staging, atomic operation status, duplicate suppression, and preservation of failed payloads.
-- Acceptance of referenced `ComponentPolarityLayer` geometry and rejection of unknown referenced layers with primitive, layer ID, and layer name diagnostics.
-- Fourteen-day cleanup of retained failed staging data.
+Required regression parts include `C7434411`, TSSOP, LQFP, UFQFPN, QFN, exposed-pad, through-hole, slotted-hole, repeated-pad, and copper-region cases. Compare geometry and electrical identities with independent references.
 
-Supported source symbol prefixes are `P`, `R`, `E`, `C`, `A`, `PL`, `PG`, and `PT`. Supported footprint prefixes are `PAD`, `TRACK`, `HOLE`, `VIA`, `CIRCLE`, `ARC`, `RECT`, `TEXT`, `SVGNODE`, and straight polygonal `SOLIDREGION`. Unknown prefixes and solid regions with curved or relative path commands block import.
+## Failure and recovery gate
 
-EasyEDA `ComponentMarkingLayer` and `ComponentPolarityLayer` both map to Altium Mechanical 11. Layer references in `PAD`, `TRACK`, `CIRCLE`, `ARC`, `RECT`, `TEXT`, and `SOLIDREGION` are validated before a request is queued. Unknown layers in the provider layer table are ignored only when no converted primitive references them.
+- Inject failure during footprint conversion, save, reopen, linking, and placement setup. All staging tabs must close, PCB pre/post processing must balance, and the captured schematic must regain focus.
+- Confirm failed source payloads remain diagnostic data and are never published or replayed.
+- Confirm duplicate clicks cannot run concurrent native transactions.
+- Close the UI during a native transaction. The window must hide while the transaction completes or rolls back and reconnect when reopened.
+- Interrupt Altium after publication but before placement. The operation journal must mark placement as uncertain and restart must not replay it.
+- Verify locked files, Unicode paths, insufficient space, malformed/oversized provider responses, endpoint schema changes, timeout, and network loss produce actionable request IDs.
+- Verify missing WebView2 leaves offline search and local imports usable.
 
-## Required interactive qualification
+## Upgrade, repair, and removal gate
 
-These gates cannot be established by the standalone test runner and remain required before calling this a production release:
+- Upgrade from 0.2.4 and confirm the old companion shortcut/application and Bridge script folder are retired only after successful registration.
+- Confirm the prior script folder, extension, and registry are backed up under `%ProgramData%\AltiumLcscBridge\Backups`.
+- Confirm repair preserves library root, manifests, SQLite index, logs, journals, and browser profiles.
+- Confirm uninstall preserves user libraries and unrelated Altium extension entries.
+- Remove any manually added **LCSC Browser** toolbar button through Altium Customize; preference files are not edited directly.
 
-- Compiled extension loading on Altium Designer 26.9.1.10.
-- Native SchLib/PcbLib creation, save, close, reopen, and footprint resolution.
-- Geometry and electrical comparison against independent fixtures, including multi-unit parts.
-- Interactive placement, Escape cancellation, undo, compilation, and PCB ECO.
-- Restart/offline reuse, upgrade, repair, relocation, and uninstall on a clean machine.
-
-Until those checks are recorded, the package is an installable beta and not a qualified “flawless” release.
+Record the Altium build, WebView2 runtime version, fixture IDs, pass/fail evidence, and any unavailable interactive gate. An unavailable or failed Altium gate blocks declaring 0.3.0 release-qualified.

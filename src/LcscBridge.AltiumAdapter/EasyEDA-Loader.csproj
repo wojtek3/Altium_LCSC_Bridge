@@ -22,16 +22,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\LcscBridge.Core\LcscBridge.Core.csproj" />
+    <ProjectReference Include="..\LcscBridge.App\LcscBridge.App.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Reference Include="Altium.Controls"><HintPath>$(AltiumInstallDir)\System\Altium.Controls.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="Altium.SDK"><HintPath>$(AltiumInstallDir)\System\Altium.SDK.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="Altium.SDK.Interfaces"><HintPath>$(AltiumInstallDir)\System\Altium.SDK.Interfaces.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="DevExpress.Data.v25.2"><HintPath>$(AltiumInstallDir)\System\DotNet\DevExpress.Wpf\DevExpress.Data.v25.2.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="DevExpress.Mvvm.v25.2"><HintPath>$(AltiumInstallDir)\System\DotNet\DevExpress.Wpf\DevExpress.Mvvm.v25.2.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="DevExpress.Printing.v25.2.Core"><HintPath>$(AltiumInstallDir)\System\DotNet\DevExpress.Wpf\DevExpress.Printing.v25.2.Core.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="DevExpress.Utils.v25.2"><HintPath>$(AltiumInstallDir)\System\DotNet\DevExpress.Wpf\DevExpress.Utils.v25.2.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="DevExpress.Xpf.Core.v25.2"><HintPath>$(AltiumInstallDir)\System\DotNet\DevExpress.Wpf\DevExpress.Xpf.Core.v25.2.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="DevExpress.Xpf.Grid.v25.2.Core"><HintPath>$(AltiumInstallDir)\System\DotNet\DevExpress.Wpf\DevExpress.Xpf.Grid.v25.2.Core.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="DevExpress.Xpf.Grid.v25.2"><HintPath>$(AltiumInstallDir)\System\DotNet\DevExpress.Wpf\DevExpress.Xpf.Grid.v25.2.dll</HintPath><Private>false</Private></Reference>
   </ItemGroup>
 
   <PropertyGroup>
@@ -46,7 +44,8 @@
   <ItemGroup>
     <EmbeddedResource Remove="Properties\licenses.licx" />
     <None Remove="packages.config" />
-    <Compile Include="..\Shared\EasyEdaLayerPolicy.cs" Link="Shared\EasyEdaLayerPolicy.cs" />
+    <Compile Remove="BaseForm.cs;CanvasZoomPanHelper.cs;Dialog.cs;DialogWindow.cs" />
+    <Page Remove="DialogWindow.xaml" />
   </ItemGroup>
 
 </Project>

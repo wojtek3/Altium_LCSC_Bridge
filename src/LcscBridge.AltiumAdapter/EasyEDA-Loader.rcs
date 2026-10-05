@@ -6,7 +6,7 @@ PL
 	Shortcut1=''
 	Shortcut2=''
 	Params=''
-	Description='Load a component from EasyEDA'
+	Description='Open the unified EasyEDA/LCSC component browser'
 End
 
 Insertion _User1 TargetID='MNNoDocument_File' RefID0='NoDoc' 

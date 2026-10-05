@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.ComponentModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -176,7 +177,7 @@ public partial class MainWindow
         UpdateOnlineNavigationButtons();
         if (e.IsSuccess)
         {
-            OnlineStatusText.Text = "Live LCSC browsing. CAD-model importing remains available through Import local files.";
+            OnlineStatusText.Text = "Live LCSC browsing. Import supported models from the Online components tab.";
             return;
         }
 
@@ -232,6 +233,19 @@ public partial class MainWindow
     {
         if (!OnlineCatalogNavigation.IsAllowedWebUri(address)) return;
         Process.Start(new ProcessStartInfo(address) { UseShellExecute = true });
+    }
+
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        CancelCatalogOperation();
+        if (_nativeOperationActive && !_shutdownRequested)
+        {
+            e.Cancel = true;
+            Hide();
+            return;
+        }
+        _shutdownRequested = true;
+        base.OnClosing(e);
     }
 
     protected override void OnClosed(EventArgs e)
