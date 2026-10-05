@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="src/LcscBridge.Core/LcscBridge.Core.csproj" />
+  <Project Path="src/LcscBridge.App/LcscBridge.App.csproj" />
+  <Project Path="src/LcscBridge.AltiumAdapter/EasyEDA-Loader.csproj" />
+  <Project Path="tests/LcscBridge.Tests/LcscBridge.Tests.csproj" />
+</Solution>

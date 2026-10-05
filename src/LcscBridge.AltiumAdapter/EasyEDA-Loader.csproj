@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <OutputType>Library</OutputType>
+    <AssemblyName>EasyEDA-Loader</AssemblyName>
+    <RootNamespace>EasyEDA_Loader</RootNamespace>
+    <LangVersion>9.0</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <DebugType>embedded</DebugType>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="Altium.Controls"><HintPath>$(AltiumInstallDir)\System\Altium.Controls.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Altium.SDK"><HintPath>$(AltiumInstallDir)\System\Altium.SDK.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Altium.SDK.Interfaces"><HintPath>$(AltiumInstallDir)\System\Altium.SDK.Interfaces.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="DevExpress.Data.v25.2"><HintPath>$(AltiumInstallDir)\System\DotNet\DevExpress.Wpf\DevExpress.Data.v25.2.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="DevExpress.Mvvm.v25.2"><HintPath>$(AltiumInstallDir)\System\DotNet\DevExpress.Wpf\DevExpress.Mvvm.v25.2.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="DevExpress.Printing.v25.2.Core"><HintPath>$(AltiumInstallDir)\System\DotNet\DevExpress.Wpf\DevExpress.Printing.v25.2.Core.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="DevExpress.Utils.v25.2"><HintPath>$(AltiumInstallDir)\System\DotNet\DevExpress.Wpf\DevExpress.Utils.v25.2.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="DevExpress.Xpf.Core.v25.2"><HintPath>$(AltiumInstallDir)\System\DotNet\DevExpress.Wpf\DevExpress.Xpf.Core.v25.2.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="DevExpress.Xpf.Grid.v25.2.Core"><HintPath>$(AltiumInstallDir)\System\DotNet\DevExpress.Wpf\DevExpress.Xpf.Grid.v25.2.Core.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="DevExpress.Xpf.Grid.v25.2"><HintPath>$(AltiumInstallDir)\System\DotNet\DevExpress.Wpf\DevExpress.Xpf.Grid.v25.2.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+
+  <PropertyGroup>
+    <AltiumInstallDir Condition="'$(AltiumInstallDir)' == ''">C:\Program Files\Altium\AD23</AltiumInstallDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="EasyEDA-Loader.Ins"><CopyToOutputDirectory>Always</CopyToOutputDirectory></Content>
+    <Content Include="EasyEDA-Loader.rcs"><CopyToOutputDirectory>Always</CopyToOutputDirectory></Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Remove="Properties\licenses.licx" />
+    <None Remove="packages.config" />
+    <Compile Include="..\Shared\EasyEdaLayerPolicy.cs" Link="Shared\EasyEdaLayerPolicy.cs" />
+  </ItemGroup>
+
+</Project>

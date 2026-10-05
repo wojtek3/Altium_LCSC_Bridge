@@ -1,0 +1,29 @@
+# Local SDK and developer tools
+/.tools/
+
+# Build and release output
+/artifacts/
+**/bin/
+**/obj/
+**/publish/
+**/TestResults/
+/tests/registry-test-output/
+
+# IDE and editor files
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp

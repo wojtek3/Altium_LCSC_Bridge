@@ -1,0 +1,180 @@
+<Window x:Class="LcscBridge.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="Altium LCSC Bridge" Height="720" Width="1120" MinHeight="600" MinWidth="900"
+        WindowStartupLocation="CenterScreen">
+  <Grid Margin="16">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+
+    <DockPanel Grid.Row="0" Margin="0,0,0,12">
+      <TextBlock DockPanel.Dock="Left" Text="Altium LCSC Bridge" FontSize="24" FontWeight="SemiBold" VerticalAlignment="Center" />
+      <Button DockPanel.Dock="Right" Content="Library settings" Click="Settings_Click" />
+      <Button DockPanel.Dock="Right" Content="Open logs folder" Click="OpenLogs_Click" />
+    </DockPanel>
+
+    <TabControl Grid.Row="1" x:Name="Tabs" SelectionChanged="Tabs_SelectionChanged">
+      <TabItem Header="Offline library">
+        <Grid Margin="10">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="3*"/></Grid.ColumnDefinitions>
+          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+          <DockPanel Grid.ColumnSpan="2" Margin="0,0,0,10">
+            <Button DockPanel.Dock="Right" Content="Rebuild index" Click="Rebuild_Click" />
+            <TextBox x:Name="SearchBox" Margin="0,4" VerticalContentAlignment="Center" TextChanged="SearchBox_TextChanged"
+                     ToolTip="Search manufacturer, MPN, LCSC/JLCPCB number, description, package, symbol, or footprint" />
+          </DockPanel>
+          <ListBox Grid.Row="1" x:Name="Results" DisplayMemberPath="DisplayName" SelectionChanged="Results_SelectionChanged" />
+          <ScrollViewer Grid.Row="1" Grid.Column="1" Margin="14,0,0,0" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+              <TextBlock x:Name="PartTitle" FontSize="21" FontWeight="SemiBold" Text="Select a cached component" />
+              <TextBlock x:Name="PartDescription" Margin="0,5,0,14" TextWrapping="Wrap" Foreground="#555" />
+              <UniformGrid Columns="2">
+                <GroupBox Header="Schematic symbol" Margin="0,0,6,8" Height="150">
+                  <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <TextBlock Text="◇" FontSize="44" HorizontalAlignment="Center" />
+                    <TextBlock x:Name="SymbolPreview" Text="Native Altium library" TextAlignment="Center" />
+                  </StackPanel>
+                </GroupBox>
+                <GroupBox Header="PCB footprint" Margin="6,0,0,8" Height="150">
+                  <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <TextBlock Text="▦" FontSize="44" HorizontalAlignment="Center" />
+                    <TextBlock x:Name="FootprintPreview" Text="Native Altium library" TextAlignment="Center" />
+                  </StackPanel>
+                </GroupBox>
+              </UniformGrid>
+              <TextBlock x:Name="PartDetails" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,8" />
+              <WrapPanel Margin="0,12,0,0">
+                <Button x:Name="PlaceButton" Content="Place cached component" IsEnabled="False" Click="Place_Click" />
+                <Button x:Name="InstallButton" Content="Install library only" IsEnabled="False" Click="Install_Click" />
+                <Button x:Name="DatasheetButton" Content="Open datasheet" IsEnabled="False" Click="Datasheet_Click" />
+              </WrapPanel>
+            </StackPanel>
+          </ScrollViewer>
+        </Grid>
+      </TabItem>
+
+      <TabItem x:Name="OnlineComponentsTab" Header="Online components">
+        <Grid Margin="10">
+          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+          <DockPanel Grid.Row="0" Margin="0,0,0,10">
+            <Button DockPanel.Dock="Right" Content="Search components" MinWidth="150" Click="CatalogSearch_Click"/>
+            <TextBox x:Name="CatalogSearchBox" Margin="0,4" KeyDown="CatalogSearchBox_KeyDown"
+                     ToolTip="Search by LCSC number, manufacturer part number, or keyword"/>
+          </DockPanel>
+          <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="320"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <ListBox x:Name="CatalogResults" DisplayMemberPath="DisplayName" SelectionChanged="CatalogResults_SelectionChanged"/>
+            <ScrollViewer Grid.Column="1" Margin="14,0,0,0" VerticalScrollBarVisibility="Auto">
+              <StackPanel>
+                <TextBlock x:Name="CatalogPartTitle" FontSize="21" FontWeight="SemiBold" Text="Search the EasyEDA/LCSC catalog"/>
+                <TextBlock x:Name="CatalogPartDescription" Margin="0,5,0,10" TextWrapping="Wrap" Foreground="#555"/>
+                <TextBlock x:Name="CatalogPartDetails" FontFamily="Consolas" TextWrapping="Wrap"/>
+                <UniformGrid Columns="2" Margin="0,10,0,0">
+                  <GroupBox Header="Source symbol" Height="260" Margin="0,0,5,0">
+                    <wv2:WebView2 x:Name="CatalogSymbolPreview"/>
+                  </GroupBox>
+                  <GroupBox Header="Source footprint" Height="260" Margin="5,0,0,0">
+                    <wv2:WebView2 x:Name="CatalogFootprintPreview"/>
+                  </GroupBox>
+                </UniformGrid>
+                <TextBlock x:Name="CatalogValidationText" Margin="0,9,0,0" TextWrapping="Wrap"/>
+              </StackPanel>
+            </ScrollViewer>
+          </Grid>
+          <DockPanel Grid.Row="2" Margin="0,10,0,0">
+            <ProgressBar x:Name="CatalogProgress" Width="160" Height="18" IsIndeterminate="True" Visibility="Collapsed" DockPanel.Dock="Right"/>
+            <WrapPanel>
+              <Button x:Name="CatalogImportButton" Content="Import to library" IsEnabled="False" Click="CatalogImport_Click"/>
+              <Button x:Name="CatalogImportPlaceButton" Content="Import and place" IsEnabled="False" Click="CatalogImportPlace_Click"/>
+              <Button x:Name="CatalogPlaceCachedButton" Content="Place cached component" IsEnabled="False" Click="CatalogPlaceCached_Click"/>
+              <Button x:Name="CatalogCancelButton" Content="Cancel" IsEnabled="False" Click="CatalogCancel_Click"/>
+            </WrapPanel>
+          </DockPanel>
+        </Grid>
+      </TabItem>
+
+      <TabItem x:Name="WebsiteTab" Header="LCSC website">
+        <Grid Margin="10">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+
+          <DockPanel Grid.Row="0" Margin="0,0,0,6">
+            <Button DockPanel.Dock="Right" MinWidth="135" Content="Search LCSC" Click="OnlineSearch_Click"/>
+            <TextBox x:Name="OnlineSearchBox" Margin="0,4" VerticalContentAlignment="Center"
+                     KeyDown="OnlineSearchBox_KeyDown"
+                     ToolTip="Search by keyword, manufacturer part number, or LCSC part number"/>
+          </DockPanel>
+
+          <DockPanel Grid.Row="1" LastChildFill="True" Margin="0,0,0,6">
+            <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+              <Button x:Name="OnlineBackButton" Content="Back" MinWidth="70" IsEnabled="False" Click="OnlineBack_Click"/>
+              <Button x:Name="OnlineForwardButton" Content="Forward" MinWidth="75" IsEnabled="False" Click="OnlineForward_Click"/>
+              <Button Content="Home" MinWidth="70" Click="OnlineHome_Click"/>
+              <Button x:Name="OnlineReloadButton" Content="Reload" MinWidth="75" IsEnabled="False" Click="OnlineReload_Click"/>
+              <Button Content="Open in browser" MinWidth="125" Click="OnlineExternal_Click"/>
+            </StackPanel>
+            <TextBox x:Name="OnlineAddress" Margin="8,4,0,4" IsReadOnly="True" VerticalContentAlignment="Center"/>
+          </DockPanel>
+
+          <Grid Grid.Row="2">
+            <wv2:WebView2 x:Name="OnlineWebView" Visibility="Hidden"/>
+            <Border x:Name="OnlineMessagePanel" Background="#F7F8FA" BorderBrush="#D9DEE5" BorderThickness="1" Padding="24">
+              <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="620">
+                <TextBlock x:Name="OnlineMessageTitle" Text="LCSC online catalog" FontSize="20" FontWeight="SemiBold" TextAlignment="Center"/>
+                <TextBlock x:Name="OnlineMessageText" Margin="0,10,0,8" TextWrapping="Wrap" TextAlignment="Center"
+                           Text="Open this tab to initialize the secure embedded browser."/>
+                <WrapPanel HorizontalAlignment="Center">
+                  <Button x:Name="OnlineRetryButton" Content="Retry" Visibility="Collapsed" Click="OnlineRetry_Click"/>
+                  <Button x:Name="RuntimeDownloadButton" Content="Get WebView2 Runtime" Visibility="Collapsed" Click="RuntimeDownload_Click"/>
+                  <Button Content="Open LCSC externally" Click="OnlineExternal_Click"/>
+                </WrapPanel>
+              </StackPanel>
+            </Border>
+          </Grid>
+
+          <TextBlock Grid.Row="3" x:Name="OnlineStatusText" Margin="2,7,2,0" Foreground="#555" TextWrapping="Wrap"
+                     Text="Live browsing only. Importing CAD models still uses the Import local files tab."/>
+        </Grid>
+      </TabItem>
+
+      <TabItem Header="Import local files">
+        <ScrollViewer Margin="18" VerticalScrollBarVisibility="Auto">
+          <Grid MaxWidth="740" HorizontalAlignment="Left">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+              <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+            </Grid.RowDefinitions>
+            <TextBlock Grid.Row="0" Grid.ColumnSpan="3" Margin="0,0,0,14" TextWrapping="Wrap" Text="Choose either an IntLib or a SchLib/PcbLib pair. Component names are required because Altium library files are binary and are inspected by the Altium adapter." />
+            <TextBlock Grid.Row="1" Text="Schematic library" VerticalAlignment="Center"/><TextBox Grid.Row="1" Grid.Column="1" x:Name="SchLibPath"/><Button Grid.Row="1" Grid.Column="2" Content="Browse…" Click="BrowseSch_Click"/>
+            <TextBlock Grid.Row="2" Text="PCB library" VerticalAlignment="Center"/><TextBox Grid.Row="2" Grid.Column="1" x:Name="PcbLibPath"/><Button Grid.Row="2" Grid.Column="2" Content="Browse…" Click="BrowsePcb_Click"/>
+            <TextBlock Grid.Row="3" Text="Integrated library" VerticalAlignment="Center"/><TextBox Grid.Row="3" Grid.Column="1" x:Name="IntLibPath"/><Button Grid.Row="3" Grid.Column="2" Content="Browse…" Click="BrowseInt_Click"/>
+            <TextBlock Grid.Row="4" Text="Manufacturer" VerticalAlignment="Center"/><TextBox Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2" x:Name="Manufacturer"/>
+            <TextBlock Grid.Row="5" Text="Manufacturer part no." VerticalAlignment="Center"/><TextBox Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="2" x:Name="Mpn"/>
+            <TextBlock Grid.Row="6" Text="LCSC/JLCPCB part no." VerticalAlignment="Center"/><TextBox Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="2" x:Name="SupplierPart"/>
+            <TextBlock Grid.Row="7" Text="Description" VerticalAlignment="Center"/><TextBox Grid.Row="7" Grid.Column="1" Grid.ColumnSpan="2" x:Name="Description"/>
+            <TextBlock Grid.Row="8" Text="Package" VerticalAlignment="Center"/><TextBox Grid.Row="8" Grid.Column="1" Grid.ColumnSpan="2" x:Name="Package"/>
+            <TextBlock Grid.Row="9" Text="Datasheet URL" VerticalAlignment="Center"/><TextBox Grid.Row="9" Grid.Column="1" Grid.ColumnSpan="2" x:Name="Datasheet"/>
+            <TextBlock Grid.Row="10" Text="Symbol reference" VerticalAlignment="Center"/><TextBox Grid.Row="10" Grid.Column="1" Grid.ColumnSpan="2" x:Name="SymbolReference"/>
+            <TextBlock Grid.Row="11" Text="Footprint name" VerticalAlignment="Center"/><TextBox Grid.Row="11" Grid.Column="1" Grid.ColumnSpan="2" x:Name="FootprintName"/>
+            <WrapPanel Grid.Row="12" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,12,0,0">
+              <Button Content="Import to library" Click="Import_Click" />
+              <Button Content="Import and place" Click="ImportPlace_Click" />
+            </WrapPanel>
+          </Grid>
+        </ScrollViewer>
+      </TabItem>
+    </TabControl>
+
+    <Border Grid.Row="2" Margin="0,10,0,0" Padding="8" Background="#F2F4F7">
+      <TextBlock x:Name="StatusText" Text="Ready" TextWrapping="Wrap" />
+    </Border>
+  </Grid>
+</Window>
